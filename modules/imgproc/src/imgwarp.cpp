@@ -55,15 +55,15 @@ static IppStatus sts = ippInit();
 
 namespace cv
 {
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR*100 + IPP_VERSION_MINOR >= 701)
+#if IPP_VERSION_X100 >= 701
     typedef IppStatus (CV_STDCALL* ippiResizeFunc)(const void*, int, const void*, int, IppiPoint, IppiSize, IppiBorderType, void*, void*, Ipp8u*);
     typedef IppStatus (CV_STDCALL* ippiResizeGetBufferSize)(void*, IppiSize, Ipp32u, int*);
     typedef IppStatus (CV_STDCALL* ippiResizeGetSrcOffset)(void*, IppiPoint, IppiPoint*);
 #endif
 
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7)
+#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7) && 0
     typedef IppStatus (CV_STDCALL* ippiSetFunc)(const void*, void *, int, IppiSize);
-    typedef IppStatus (CV_STDCALL* ippiWarpPerspectiveBackFunc)(const void*, IppiSize, int, IppiRect, void *, int, IppiRect, double [3][3], int);
+    typedef IppStatus (CV_STDCALL* ippiWarpPerspectiveFunc)(const void*, IppiSize, int, IppiRect, void *, int, IppiRect, double [3][3], int);
     typedef IppStatus (CV_STDCALL* ippiWarpAffineBackFunc)(const void*, IppiSize, int, IppiRect, void *, int, IppiRect, double [2][3], int);
 
     template <int channels, typename Type>
@@ -71,22 +71,22 @@ namespace cv
     {
         Type values[channels];
         for( int i = 0; i < channels; i++ )
-            values[i] = (Type)value[i];
+            values[i] = saturate_cast<Type>(value[i]);
         return func(values, dataPointer, step, size) >= 0;
     }
 
-    bool IPPSet(const cv::Scalar &value, void *dataPointer, int step, IppiSize &size, int channels, int depth)
+    static bool IPPSet(const cv::Scalar &value, void *dataPointer, int step, IppiSize &size, int channels, int depth)
     {
         if( channels == 1 )
         {
             switch( depth )
             {
             case CV_8U:
-                return ippiSet_8u_C1R((Ipp8u)value[0], (Ipp8u *)dataPointer, step, size) >= 0;
+                return ippiSet_8u_C1R(saturate_cast<Ipp8u>(value[0]), (Ipp8u *)dataPointer, step, size) >= 0;
             case CV_16U:
-                return ippiSet_16u_C1R((Ipp16u)value[0], (Ipp16u *)dataPointer, step, size) >= 0;
+                return ippiSet_16u_C1R(saturate_cast<Ipp16u>(value[0]), (Ipp16u *)dataPointer, step, size) >= 0;
             case CV_32F:
-                return ippiSet_32f_C1R((Ipp32f)value[0], (Ipp32f *)dataPointer, step, size) >= 0;
+                return ippiSet_32f_C1R(saturate_cast<Ipp32f>(value[0]), (Ipp32f *)dataPointer, step, size) >= 0;
             }
         }
         else
@@ -1876,43 +1876,42 @@ static int computeResizeAreaTab( int ssize, int dsize, int cn, double scale, Dec
     return k;
 }
 
-#define CHECK_IPP_FUNC(FUNC) if( FUNC==0 ) { *ok = false; return;}
-#define CHECK_IPP_STATUS(STATUS) if( STATUS!=ippStsNoErr ) { *ok = false; return;}
+#define CHECK_IPP_STATUS(STATUS) if (STATUS < 0) { *ok = false; return; }
 
 #define SET_IPP_RESIZE_LINEAR_FUNC_PTR(TYPE, CN) \
-    func = (ippiResizeFunc)ippiResizeLinear_##TYPE##_##CN##R; CHECK_IPP_FUNC(func);\
+    func = (ippiResizeFunc)ippiResizeLinear_##TYPE##_##CN##R; \
     CHECK_IPP_STATUS(ippiResizeGetSize_##TYPE(srcSize, dstSize, (IppiInterpolationType)mode, 0, &specSize, &initSize));\
     specBuf.allocate(specSize);\
     pSpec = (uchar*)specBuf;\
     CHECK_IPP_STATUS(ippiResizeLinearInit_##TYPE(srcSize, dstSize, (IppiResizeSpec_32f*)pSpec));
 
 #define SET_IPP_RESIZE_LINEAR_FUNC_64_PTR(TYPE, CN) \
-    if (mode==(int)ippCubic) { *ok = false; return;}\
-    func = (ippiResizeFunc)ippiResizeLinear_##TYPE##_##CN##R; CHECK_IPP_FUNC(func);\
+    if (mode == (int)ippCubic) { *ok = false; return; } \
+    func = (ippiResizeFunc)ippiResizeLinear_##TYPE##_##CN##R; \
     CHECK_IPP_STATUS(ippiResizeGetSize_##TYPE(srcSize, dstSize, (IppiInterpolationType)mode, 0, &specSize, &initSize));\
     specBuf.allocate(specSize);\
     pSpec = (uchar*)specBuf;\
     CHECK_IPP_STATUS(ippiResizeLinearInit_##TYPE(srcSize, dstSize, (IppiResizeSpec_64f*)pSpec));\
     getBufferSizeFunc = (ippiResizeGetBufferSize)ippiResizeGetBufferSize_##TYPE;\
-    getSrcOffsetFunc =  (ippiResizeGetSrcOffset) ippiResizeGetBufferSize_##TYPE;
+    getSrcOffsetFunc =  (ippiResizeGetSrcOffset) ippiResizeGetSrcOffset_##TYPE;
 
 #define SET_IPP_RESIZE_CUBIC_FUNC_PTR(TYPE, CN) \
-    func = (ippiResizeFunc)ippiResizeCubic_##TYPE##_##CN##R; CHECK_IPP_FUNC(func);\
+    func = (ippiResizeFunc)ippiResizeCubic_##TYPE##_##CN##R; \
     CHECK_IPP_STATUS(ippiResizeGetSize_##TYPE(srcSize, dstSize, (IppiInterpolationType)mode, 0, &specSize, &initSize));\
     specBuf.allocate(specSize);\
     pSpec = (uchar*)specBuf;\
     AutoBuffer<uchar> buf(initSize);\
     uchar* pInit = (uchar*)buf;\
-    CHECK_IPP_STATUS(ippiResizeCubicInit_##TYPE(srcSize, dstSize,  0.f, 0.75f, (IppiResizeSpec_32f*)pSpec, pInit));
+    CHECK_IPP_STATUS(ippiResizeCubicInit_##TYPE(srcSize, dstSize, 0.f, 0.75f, (IppiResizeSpec_32f*)pSpec, pInit));
 
 #define SET_IPP_RESIZE_PTR(TYPE, CN) \
-    if (mode == (int)ippLinear)     { SET_IPP_RESIZE_LINEAR_FUNC_PTR(TYPE, CN);}\
-    else if (mode == (int)ippCubic) { SET_IPP_RESIZE_CUBIC_FUNC_PTR(TYPE, CN);}\
-    else { *ok = false; return;}\
-    getBufferSizeFunc = (ippiResizeGetBufferSize)ippiResizeGetBufferSize_##TYPE;\
+    if (mode == (int)ippLinear)     { SET_IPP_RESIZE_LINEAR_FUNC_PTR(TYPE, CN);} \
+    else if (mode == (int)ippCubic) { SET_IPP_RESIZE_CUBIC_FUNC_PTR(TYPE, CN);} \
+    else { *ok = false; return; } \
+    getBufferSizeFunc = (ippiResizeGetBufferSize)ippiResizeGetBufferSize_##TYPE; \
     getSrcOffsetFunc =  (ippiResizeGetSrcOffset)ippiResizeGetSrcOffset_##TYPE;
 
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR*100 + IPP_VERSION_MINOR >= 701)
+#if IPP_VERSION_X100 >= 701
 class IPPresizeInvoker :
     public ParallelLoopBody
 {
@@ -1931,9 +1930,11 @@ public:
 
         switch (type)
         {
+#if 0 // disabled since it breaks tests for CascadeClassifier
             case CV_8UC1:  SET_IPP_RESIZE_PTR(8u,C1);  break;
             case CV_8UC3:  SET_IPP_RESIZE_PTR(8u,C3);  break;
             case CV_8UC4:  SET_IPP_RESIZE_PTR(8u,C4);  break;
+#endif
             case CV_16UC1: SET_IPP_RESIZE_PTR(16u,C1); break;
             case CV_16UC3: SET_IPP_RESIZE_PTR(16u,C3); break;
             case CV_16UC4: SET_IPP_RESIZE_PTR(16u,C4); break;
@@ -1971,7 +1972,7 @@ public:
         CHECK_IPP_STATUS(getBufferSizeFunc(pSpec, dstSize, cn, &bufsize));
         CHECK_IPP_STATUS(getSrcOffsetFunc(pSpec, dstOffset, &srcOffset));
 
-        Ipp8u* pSrc = (Ipp8u*)src.data + (int)src.step[0] * srcOffset.y + srcOffset.x * cn * itemSize;
+        const Ipp8u* pSrc = (const Ipp8u*)src.data + (int)src.step[0] * srcOffset.y + srcOffset.x * cn * itemSize;
         Ipp8u* pDst = (Ipp8u*)dst.data + (int)dst.step[0] * dstOffset.y + dstOffset.x * cn * itemSize;
 
         AutoBuffer<uchar> buf(bufsize + 64);
@@ -1980,9 +1981,8 @@ public:
         if( func( pSrc, (int)src.step[0], pDst, (int)dst.step[0], dstOffset, dstSize, ippBorderRepl, 0, pSpec, bufptr ) < 0 )
             *ok = false;
     }
-
 private:
-    Mat & src;
+    const Mat & src;
     Mat & dst;
     double inv_scale_x;
     double inv_scale_y;
@@ -2038,15 +2038,6 @@ static void ocl_computeResizeAreaTabs(int ssize, int dsize, double scale, int * 
     ofs_tab[dx] = k;
 }
 
-static void ocl_computeResizeAreaFastTabs(int * dmap_tab, int * smap_tab, int scale, int dcols, int scol)
-{
-    for (int i = 0; i < dcols; ++i)
-        dmap_tab[i] = scale * i;
-
-    for (int i = 0, size = dcols * scale; i < size; ++i)
-        smap_tab[i] = std::min(scol - 1, i);
-}
-
 static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
                         double fx, double fy, int interpolation)
 {
@@ -2076,7 +2067,37 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
     ocl::Kernel k;
     size_t globalsize[] = { dst.cols, dst.rows };
 
-    if (interpolation == INTER_LINEAR)
+    ocl::Image2D srcImage;
+
+    // See if this could be done with a sampler.  We stick with integer
+    // datatypes because the observed error is low.
+    bool useSampler = (interpolation == INTER_LINEAR && ocl::Device::getDefault().imageSupport() &&
+                       ocl::Image2D::canCreateAlias(src) && depth <= 4 &&
+                       ocl::Image2D::isFormatSupported(depth, cn, true));
+    if (useSampler)
+    {
+        int wdepth = std::max(depth, CV_32S);
+        char buf[2][32];
+        cv::String compileOpts = format("-D USE_SAMPLER -D depth=%d -D T=%s -D T1=%s "
+                        "-D convertToDT=%s -D cn=%d",
+                        depth, ocl::typeToStr(type), ocl::typeToStr(depth),
+                        ocl::convertTypeStr(wdepth, depth, cn, buf[1]),
+                        cn);
+        k.create("resizeSampler", ocl::imgproc::resize_oclsrc, compileOpts);
+
+        if (k.empty())
+            useSampler = false;
+        else
+        {
+            // Convert the input into an OpenCL image type, using normalized channel data types
+            // and aliasing the UMat.
+            srcImage = ocl::Image2D(src, true, true);
+            k.args(srcImage, ocl::KernelArg::WriteOnly(dst),
+                   (float)inv_fx, (float)inv_fy);
+        }
+    }
+
+    if (interpolation == INTER_LINEAR && !useSampler)
     {
         char buf[2][32];
 
@@ -2181,25 +2202,14 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
         {
             int wdepth2 = std::max(CV_32F, depth), wtype2 = CV_MAKE_TYPE(wdepth2, cn);
             buildOption = buildOption + format(" -D convertToT=%s -D WT2V=%s -D convertToWT2V=%s -D INTER_AREA_FAST"
-                                               " -D XSCALE=%d -D YSCALE=%d -D SCALE=%ff",
-                                               ocl::convertTypeStr(wdepth2, depth, cn, cvt[0]),
-                                               ocl::typeToStr(wtype2), ocl::convertTypeStr(wdepth, wdepth2, cn, cvt[1]),
-                                  iscale_x, iscale_y, 1.0f / (iscale_x * iscale_y));
+                                                " -D XSCALE=%d -D YSCALE=%d -D SCALE=%ff",
+                                                ocl::convertTypeStr(wdepth2, depth, cn, cvt[0]),
+                                                ocl::typeToStr(wtype2), ocl::convertTypeStr(wdepth, wdepth2, cn, cvt[1]),
+                                    iscale_x, iscale_y, 1.0f / (iscale_x * iscale_y));
 
             k.create("resizeAREA_FAST", ocl::imgproc::resize_oclsrc, buildOption);
             if (k.empty())
                 return false;
-
-            int smap_tab_size = dst.cols * iscale_x + dst.rows * iscale_y;
-            AutoBuffer<int> dmap_tab(dst.cols + dst.rows), smap_tab(smap_tab_size);
-            int * dxmap_tab = dmap_tab, * dymap_tab = dxmap_tab + dst.cols;
-            int * sxmap_tab = smap_tab, * symap_tab = smap_tab + dst.cols * iscale_y;
-
-            ocl_computeResizeAreaFastTabs(dxmap_tab, sxmap_tab, iscale_x, dst.cols, src.cols);
-            ocl_computeResizeAreaFastTabs(dymap_tab, symap_tab, iscale_y, dst.rows, src.rows);
-
-            Mat(1, dst.cols + dst.rows, CV_32SC1, (void *)dmap_tab).copyTo(dmap);
-            Mat(1, smap_tab_size, CV_32SC1, (void *)smap_tab).copyTo(smap);
         }
         else
         {
@@ -2229,7 +2239,7 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
         ocl::KernelArg srcarg = ocl::KernelArg::ReadOnly(src), dstarg = ocl::KernelArg::WriteOnly(dst);
 
         if (is_area_fast)
-            k.args(srcarg, dstarg, ocl::KernelArg::PtrReadOnly(dmap), ocl::KernelArg::PtrReadOnly(smap));
+            k.args(srcarg, dstarg);
         else
             k.args(srcarg, dstarg, inv_fxf, inv_fyf, ocl::KernelArg::PtrReadOnly(tabofsOcl),
                    ocl::KernelArg::PtrReadOnly(mapOcl), ocl::KernelArg::PtrReadOnly(alphaOcl));
@@ -2381,30 +2391,34 @@ void cv::resize( InputArray _src, OutputArray _dst, Size dsize,
         return;
 #endif
 
-    int depth = src.depth(), cn = src.channels();
+    int type = src.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
     double scale_x = 1./inv_scale_x, scale_y = 1./inv_scale_y;
     int k, sx, sy, dx, dy;
 
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR*100 + IPP_VERSION_MINOR >= 701)
-#define IPP_RESIZE_EPS    1.e-10
+    int iscale_x = saturate_cast<int>(scale_x);
+    int iscale_y = saturate_cast<int>(scale_y);
 
-    double ex = fabs((double)dsize.width/src.cols  - inv_scale_x)/inv_scale_x;
-    double ey = fabs((double)dsize.height/src.rows - inv_scale_y)/inv_scale_y;
+    bool is_area_fast = std::abs(scale_x - iscale_x) < DBL_EPSILON &&
+            std::abs(scale_y - iscale_y) < DBL_EPSILON;
 
-    if ((ex < IPP_RESIZE_EPS && ey < IPP_RESIZE_EPS && depth != CV_64F) ||
-        (ex == 0 && ey == 0 && depth == CV_64F))
+#if IPP_VERSION_X100 >= 701
+#define IPP_RESIZE_EPS 1e-10
+
+    double ex = fabs((double)dsize.width / src.cols  - inv_scale_x) / inv_scale_x;
+    double ey = fabs((double)dsize.height / src.rows - inv_scale_y) / inv_scale_y;
+
+    if ( ((ex < IPP_RESIZE_EPS && ey < IPP_RESIZE_EPS && depth != CV_64F) || (ex == 0 && ey == 0 && depth == CV_64F)) &&
+         (interpolation == INTER_LINEAR || interpolation == INTER_CUBIC) &&
+         !(interpolation == INTER_LINEAR && is_area_fast && iscale_x == 2 && iscale_y == 2 && depth == CV_8U))
     {
-        int mode = 0;
+        int mode = -1;
         if (interpolation == INTER_LINEAR && src.rows >= 2 && src.cols >= 2)
-        {
             mode = ippLinear;
-        }
         else if (interpolation == INTER_CUBIC && src.rows >= 4 && src.cols >= 4)
-        {
             mode = ippCubic;
-        }
-        if( mode != 0 && (cn == 1 || cn ==3 || cn == 4) &&
-            (depth == CV_8U || depth == CV_16U || depth == CV_16S || depth == CV_32F ||
+
+        if( mode >= 0 && (cn == 1 || cn == 3 || cn == 4) &&
+            (depth == CV_16U || depth == CV_16S || depth == CV_32F ||
             (depth == CV_64F && mode == ippLinear)))
         {
             bool ok = true;
@@ -2413,6 +2427,7 @@ void cv::resize( InputArray _src, OutputArray _dst, Size dsize,
             parallel_for_(range, invoker, dst.total()/(double)(1<<16));
             if( ok )
                 return;
+            setIppErrorStatus();
         }
     }
 #undef IPP_RESIZE_EPS
@@ -2425,12 +2440,6 @@ void cv::resize( InputArray _src, OutputArray _dst, Size dsize,
     }
 
     {
-        int iscale_x = saturate_cast<int>(scale_x);
-        int iscale_y = saturate_cast<int>(scale_y);
-
-        bool is_area_fast = std::abs(scale_x - iscale_x) < DBL_EPSILON &&
-                std::abs(scale_y - iscale_y) < DBL_EPSILON;
-
         // in case of scale_x && scale_y is equal to 2
         // INTER_AREA (fast) also is equal to INTER_LINEAR
         if( interpolation == INTER_LINEAR && is_area_fast && iscale_x == 2 && iscale_y == 2 )
@@ -3649,6 +3658,54 @@ static bool ocl_remap(InputArray _src, OutputArray _dst, InputArray _map1, Input
 
 #endif
 
+#if IPP_VERSION_X100 >= 0 && !defined HAVE_IPP_ICV_ONLY && 0
+
+typedef IppStatus (CV_STDCALL * ippiRemap)(const void * pSrc, IppiSize srcSize, int srcStep, IppiRect srcRoi,
+                                           const Ipp32f* pxMap, int xMapStep, const Ipp32f* pyMap, int yMapStep,
+                                           void * pDst, int dstStep, IppiSize dstRoiSize, int interpolation);
+
+class IPPRemapInvoker :
+        public ParallelLoopBody
+{
+public:
+    IPPRemapInvoker(Mat & _src, Mat & _dst, Mat & _xmap, Mat & _ymap, ippiRemap _ippFunc,
+                    int _ippInterpolation, int _borderType, const Scalar & _borderValue, bool * _ok) :
+        ParallelLoopBody(), src(_src), dst(_dst), map1(_xmap), map2(_ymap), ippFunc(_ippFunc),
+        ippInterpolation(_ippInterpolation), borderType(_borderType), borderValue(_borderValue), ok(_ok)
+    {
+        *ok = true;
+    }
+
+    virtual void operator() (const Range & range) const
+    {
+        IppiRect srcRoiRect = { 0, 0, src.cols, src.rows };
+        Mat dstRoi = dst.rowRange(range);
+        IppiSize dstRoiSize = ippiSize(dstRoi.size());
+        int type = dst.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+
+        if (borderType == BORDER_CONSTANT &&
+                !IPPSet(borderValue, dstRoi.data, (int)dstRoi.step, dstRoiSize, cn, depth))
+        {
+            *ok = false;
+            return;
+        }
+
+        if (ippFunc(src.data, ippiSize(src.size()), (int)src.step, srcRoiRect,
+                    (const Ipp32f *)map1.data, (int)map1.step, (const Ipp32f *)map2.data, (int)map2.step,
+                    dstRoi.data, (int)dstRoi.step, dstRoiSize, ippInterpolation) < 0)
+            *ok = false;
+    }
+
+private:
+    Mat & src, & dst, & map1, & map2;
+    ippiRemap ippFunc;
+    int ippInterpolation, borderType;
+    Scalar borderValue;
+    bool * ok;
+};
+
+#endif
+
 }
 
 void cv::remap( InputArray _src, OutputArray _dst,
@@ -3700,7 +3757,46 @@ void cv::remap( InputArray _src, OutputArray _dst,
     if( dst.data == src.data )
         src = src.clone();
 
-    int depth = src.depth();
+    if( interpolation == INTER_AREA )
+        interpolation = INTER_LINEAR;
+
+    int type = src.type(), depth = CV_MAT_DEPTH(type);
+
+#if IPP_VERSION_X100 >= 0 && !defined HAVE_IPP_ICV_ONLY && 0
+    if ((interpolation == INTER_LINEAR || interpolation == INTER_CUBIC || interpolation == INTER_NEAREST) &&
+            map1.type() == CV_32FC1 && map2.type() == CV_32FC1 &&
+            (borderType == BORDER_CONSTANT || borderType == BORDER_TRANSPARENT))
+    {
+        int ippInterpolation =
+            interpolation == INTER_NEAREST ? IPPI_INTER_NN :
+            interpolation == INTER_LINEAR ? IPPI_INTER_LINEAR : IPPI_INTER_CUBIC;
+
+        ippiRemap ippFunc =
+            type == CV_8UC1 ? (ippiRemap)ippiRemap_8u_C1R :
+            type == CV_8UC3 ? (ippiRemap)ippiRemap_8u_C3R :
+            type == CV_8UC4 ? (ippiRemap)ippiRemap_8u_C4R :
+            type == CV_16UC1 ? (ippiRemap)ippiRemap_16u_C1R :
+            type == CV_16UC3 ? (ippiRemap)ippiRemap_16u_C3R :
+            type == CV_16UC4 ? (ippiRemap)ippiRemap_16u_C4R :
+            type == CV_32FC1 ? (ippiRemap)ippiRemap_32f_C1R :
+            type == CV_32FC3 ? (ippiRemap)ippiRemap_32f_C3R :
+            type == CV_32FC4 ? (ippiRemap)ippiRemap_32f_C4R : 0;
+
+        if (ippFunc)
+        {
+            bool ok;
+            IPPRemapInvoker invoker(src, dst, map1, map2, ippFunc, ippInterpolation,
+                                    borderType, borderValue, &ok);
+            Range range(0, dst.rows);
+            parallel_for_(range, invoker, dst.total() / (double)(1 << 16));
+
+            if (ok)
+                return;
+            setIppErrorStatus();
+        }
+    }
+#endif
+
     RemapNNFunc nnfunc = 0;
     RemapFunc ifunc = 0;
     const void* ctab = 0;
@@ -3714,9 +3810,6 @@ void cv::remap( InputArray _src, OutputArray _dst,
     }
     else
     {
-        if( interpolation == INTER_AREA )
-            interpolation = INTER_LINEAR;
-
         if( interpolation == INTER_LINEAR )
             ifunc = linear_tab[depth];
         else if( interpolation == INTER_CUBIC )
@@ -3893,11 +3986,11 @@ void cv::convertMaps( InputArray _map1, InputArray _map2,
 namespace cv
 {
 
-class warpAffineInvoker :
+class WarpAffineInvoker :
     public ParallelLoopBody
 {
 public:
-    warpAffineInvoker(const Mat &_src, Mat &_dst, int _interpolation, int _borderType,
+    WarpAffineInvoker(const Mat &_src, Mat &_dst, int _interpolation, int _borderType,
                       const Scalar &_borderValue, int *_adelta, int *_bdelta, double *_M) :
         ParallelLoopBody(), src(_src), dst(_dst), interpolation(_interpolation),
         borderType(_borderType), borderValue(_borderValue), adelta(_adelta), bdelta(_bdelta),
@@ -4014,46 +4107,53 @@ private:
     double *M;
 };
 
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7)
-class IPPwarpAffineInvoker :
+
+#if defined (HAVE_IPP) && IPP_VERSION_MAJOR * 100 + IPP_VERSION_MINOR >= 801 && 0
+class IPPWarpAffineInvoker :
     public ParallelLoopBody
 {
 public:
-    IPPwarpAffineInvoker(Mat &_src, Mat &_dst, double (&_coeffs)[2][3], int &_interpolation, int &_borderType, const Scalar &_borderValue, ippiWarpAffineBackFunc _func, bool *_ok) :
-      ParallelLoopBody(), src(_src), dst(_dst), mode(_interpolation), coeffs(_coeffs), borderType(_borderType), borderValue(_borderValue), func(_func), ok(_ok)
-      {
-          *ok = true;
-      }
+    IPPWarpAffineInvoker(Mat &_src, Mat &_dst, double (&_coeffs)[2][3], int &_interpolation, int _borderType,
+                         const Scalar &_borderValue, ippiWarpAffineBackFunc _func, bool *_ok) :
+        ParallelLoopBody(), src(_src), dst(_dst), mode(_interpolation), coeffs(_coeffs),
+        borderType(_borderType), borderValue(_borderValue), func(_func), ok(_ok)
+    {
+        *ok = true;
+    }
 
-      virtual void operator() (const Range& range) const
-      {
-          IppiSize srcsize = { src.cols, src.rows };
-          IppiRect srcroi = { 0, 0, src.cols, src.rows };
-          IppiRect dstroi = { 0, range.start, dst.cols, range.end - range.start };
-          int cnn = src.channels();
-          if( borderType == BORDER_CONSTANT )
-          {
-              IppiSize setSize = { dst.cols, range.end - range.start };
-              void *dataPointer = dst.data + dst.step[0] * range.start;
-              if( !IPPSet( borderValue, dataPointer, (int)dst.step[0], setSize, cnn, src.depth() ) )
-              {
-                  *ok = false;
-                  return;
-              }
-          }
-          if( func( src.data, srcsize, (int)src.step[0], srcroi, dst.data, (int)dst.step[0], dstroi, coeffs, mode ) < 0) ////Aug 2013: problem in IPP 7.1, 8.0 : sometimes function return ippStsCoeffErr
-              *ok = false;
-      }
+    virtual void operator() (const Range& range) const
+    {
+        IppiSize srcsize = { src.cols, src.rows };
+        IppiRect srcroi = { 0, 0, src.cols, src.rows };
+        IppiRect dstroi = { 0, range.start, dst.cols, range.end - range.start };
+        int cnn = src.channels();
+        if( borderType == BORDER_CONSTANT )
+        {
+            IppiSize setSize = { dst.cols, range.end - range.start };
+            void *dataPointer = dst.data + dst.step[0] * range.start;
+            if( !IPPSet( borderValue, dataPointer, (int)dst.step[0], setSize, cnn, src.depth() ) )
+            {
+                *ok = false;
+                return;
+            }
+        }
+
+        // Aug 2013: problem in IPP 7.1, 8.0 : sometimes function return ippStsCoeffErr
+        IppStatus status = func( src.data, srcsize, (int)src.step[0], srcroi, dst.data,
+                                (int)dst.step[0], dstroi, coeffs, mode );
+        if( status < 0)
+            *ok = false;
+    }
 private:
     Mat &src;
     Mat &dst;
-    double (&coeffs)[2][3];
     int mode;
+    double (&coeffs)[2][3];
     int borderType;
     Scalar borderValue;
     ippiWarpAffineBackFunc func;
     bool *ok;
-    const IPPwarpAffineInvoker& operator= (const IPPwarpAffineInvoker&);
+    const IPPWarpAffineInvoker& operator= (const IPPWarpAffineInvoker&);
 };
 #endif
 
@@ -4205,16 +4305,18 @@ void cv::warpAffine( InputArray _src, OutputArray _dst,
     int* adelta = &_abdelta[0], *bdelta = adelta + dst.cols;
     const int AB_BITS = MAX(10, (int)INTER_BITS);
     const int AB_SCALE = 1 << AB_BITS;
-/*
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7)
-    int depth = src.depth();
-    int channels = src.channels();
+
+#if defined (HAVE_IPP) && IPP_VERSION_MAJOR * 100 + IPP_VERSION_MINOR >= 801 && 0
+    int type = src.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
     if( ( depth == CV_8U || depth == CV_16U || depth == CV_32F ) &&
-        ( channels == 1 || channels == 3 || channels == 4 ) &&
-        ( borderType == cv::BORDER_TRANSPARENT || ( borderType == cv::BORDER_CONSTANT ) ) )
+       ( cn == 1 || cn == 3 || cn == 4 ) &&
+       ( interpolation == INTER_NEAREST || interpolation == INTER_LINEAR || interpolation == INTER_CUBIC) &&
+       ( borderType == cv::BORDER_TRANSPARENT || borderType == cv::BORDER_CONSTANT) )
     {
-        int type = src.type();
-        ippiWarpAffineBackFunc ippFunc =
+        ippiWarpAffineBackFunc ippFunc = 0;
+        if ((flags & WARP_INVERSE_MAP) != 0)
+        {
+            ippFunc =
             type == CV_8UC1 ? (ippiWarpAffineBackFunc)ippiWarpAffineBack_8u_C1R :
             type == CV_8UC3 ? (ippiWarpAffineBackFunc)ippiWarpAffineBack_8u_C3R :
             type == CV_8UC4 ? (ippiWarpAffineBackFunc)ippiWarpAffineBack_8u_C4R :
@@ -4225,31 +4327,43 @@ void cv::warpAffine( InputArray _src, OutputArray _dst,
             type == CV_32FC3 ? (ippiWarpAffineBackFunc)ippiWarpAffineBack_32f_C3R :
             type == CV_32FC4 ? (ippiWarpAffineBackFunc)ippiWarpAffineBack_32f_C4R :
             0;
-        int mode =
-            flags == INTER_LINEAR ? IPPI_INTER_LINEAR :
-            flags == INTER_NEAREST ? IPPI_INTER_NN :
-            flags == INTER_CUBIC ? IPPI_INTER_CUBIC :
-            0;
-        if( mode && ippFunc )
-        {
-            double coeffs[2][3];
-            for( int i = 0; i < 2; i++ )
-            {
-                for( int j = 0; j < 3; j++ )
-                {
-                    coeffs[i][j] = matM.at<double>(i, j);
-                }
-            }
-            bool ok;
-            Range range(0, dst.rows);
-            IPPwarpAffineInvoker invoker(src, dst, coeffs, mode, borderType, borderValue, ippFunc, &ok);
-            parallel_for_(range, invoker, dst.total()/(double)(1<<16));
-            if( ok )
-                return;
         }
+        else
+        {
+            ippFunc =
+            type == CV_8UC1 ? (ippiWarpAffineBackFunc)ippiWarpAffine_8u_C1R :
+            type == CV_8UC3 ? (ippiWarpAffineBackFunc)ippiWarpAffine_8u_C3R :
+            type == CV_8UC4 ? (ippiWarpAffineBackFunc)ippiWarpAffine_8u_C4R :
+            type == CV_16UC1 ? (ippiWarpAffineBackFunc)ippiWarpAffine_16u_C1R :
+            type == CV_16UC3 ? (ippiWarpAffineBackFunc)ippiWarpAffine_16u_C3R :
+            type == CV_16UC4 ? (ippiWarpAffineBackFunc)ippiWarpAffine_16u_C4R :
+            type == CV_32FC1 ? (ippiWarpAffineBackFunc)ippiWarpAffine_32f_C1R :
+            type == CV_32FC3 ? (ippiWarpAffineBackFunc)ippiWarpAffine_32f_C3R :
+            type == CV_32FC4 ? (ippiWarpAffineBackFunc)ippiWarpAffine_32f_C4R :
+            0;
+        }
+        int mode =
+        interpolation == INTER_LINEAR ? IPPI_INTER_LINEAR :
+        interpolation == INTER_NEAREST ? IPPI_INTER_NN :
+        interpolation == INTER_CUBIC ? IPPI_INTER_CUBIC :
+        0;
+        CV_Assert(mode && ippFunc);
+
+        double coeffs[2][3];
+        for( int i = 0; i < 2; i++ )
+            for( int j = 0; j < 3; j++ )
+                coeffs[i][j] = matM.at<double>(i, j);
+
+        bool ok;
+        Range range(0, dst.rows);
+        IPPWarpAffineInvoker invoker(src, dst, coeffs, mode, borderType, borderValue, ippFunc, &ok);
+        parallel_for_(range, invoker, dst.total()/(double)(1<<16));
+        if( ok )
+            return;
+        setIppErrorStatus();
     }
 #endif
-*/
+
     for( x = 0; x < dst.cols; x++ )
     {
         adelta[x] = saturate_cast<int>(M[0]*x*AB_SCALE);
@@ -4257,7 +4371,7 @@ void cv::warpAffine( InputArray _src, OutputArray _dst,
     }
 
     Range range(0, dst.rows);
-    warpAffineInvoker invoker(src, dst, interpolation, borderType,
+    WarpAffineInvoker invoker(src, dst, interpolation, borderType,
                               borderValue, adelta, bdelta, M);
     parallel_for_(range, invoker, dst.total()/(double)(1<<16));
 }
@@ -4266,12 +4380,11 @@ void cv::warpAffine( InputArray _src, OutputArray _dst,
 namespace cv
 {
 
-class warpPerspectiveInvoker :
+class WarpPerspectiveInvoker :
     public ParallelLoopBody
 {
 public:
-
-    warpPerspectiveInvoker(const Mat &_src, Mat &_dst, double *_M, int _interpolation,
+    WarpPerspectiveInvoker(const Mat &_src, Mat &_dst, double *_M, int _interpolation,
                            int _borderType, const Scalar &_borderValue) :
         ParallelLoopBody(), src(_src), dst(_dst), M(_M), interpolation(_interpolation),
         borderType(_borderType), borderValue(_borderValue)
@@ -4357,50 +4470,55 @@ private:
     Scalar borderValue;
 };
 
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7)
-class IPPwarpPerspectiveInvoker :
+
+#if defined (HAVE_IPP) && IPP_VERSION_MAJOR * 100 + IPP_VERSION_MINOR >= 801 && 0
+class IPPWarpPerspectiveInvoker :
     public ParallelLoopBody
 {
 public:
-    IPPwarpPerspectiveInvoker(Mat &_src, Mat &_dst, double (&_coeffs)[3][3], int &_interpolation, int &_borderType, const Scalar &_borderValue, ippiWarpPerspectiveBackFunc _func, bool *_ok) :
-      ParallelLoopBody(), src(_src), dst(_dst), mode(_interpolation), coeffs(_coeffs), borderType(_borderType), borderValue(_borderValue), func(_func), ok(_ok)
-      {
-          *ok = true;
-      }
+    IPPWarpPerspectiveInvoker(Mat &_src, Mat &_dst, double (&_coeffs)[3][3], int &_interpolation,
+                              int &_borderType, const Scalar &_borderValue, ippiWarpPerspectiveFunc _func, bool *_ok) :
+        ParallelLoopBody(), src(_src), dst(_dst), mode(_interpolation), coeffs(_coeffs),
+        borderType(_borderType), borderValue(_borderValue), func(_func), ok(_ok)
+    {
+        *ok = true;
+    }
 
-      virtual void operator() (const Range& range) const
-      {
-          IppiSize srcsize = {src.cols, src.rows};
-          IppiRect srcroi = {0, 0, src.cols, src.rows};
-          IppiRect dstroi = {0, range.start, dst.cols, range.end - range.start};
-          int cnn = src.channels();
+    virtual void operator() (const Range& range) const
+    {
+        IppiSize srcsize = {src.cols, src.rows};
+        IppiRect srcroi = {0, 0, src.cols, src.rows};
+        IppiRect dstroi = {0, range.start, dst.cols, range.end - range.start};
+        int cnn = src.channels();
 
-          if( borderType == BORDER_CONSTANT )
-          {
-              IppiSize setSize = {dst.cols, range.end - range.start};
-              void *dataPointer = dst.data + dst.step[0] * range.start;
-              if( !IPPSet( borderValue, dataPointer, (int)dst.step[0], setSize, cnn, src.depth() ) )
-              {
-                  *ok = false;
-                  return;
-              }
-          }
-          if( func(src.data, srcsize, (int)src.step[0], srcroi, dst.data, (int)dst.step[0], dstroi, coeffs, mode) < 0)
-              *ok = false;
-      }
+        if( borderType == BORDER_CONSTANT )
+        {
+            IppiSize setSize = {dst.cols, range.end - range.start};
+            void *dataPointer = dst.data + dst.step[0] * range.start;
+            if( !IPPSet( borderValue, dataPointer, (int)dst.step[0], setSize, cnn, src.depth() ) )
+            {
+                *ok = false;
+                return;
+            }
+        }
+
+        IppStatus status = func(src.data, srcsize, (int)src.step[0], srcroi, dst.data, (int)dst.step[0], dstroi, coeffs, mode);
+        if (status != ippStsNoErr)
+            *ok = false;
+    }
 private:
     Mat &src;
     Mat &dst;
-    double (&coeffs)[3][3];
     int mode;
+    double (&coeffs)[3][3];
     int borderType;
     const Scalar borderValue;
-    ippiWarpPerspectiveBackFunc func;
+    ippiWarpPerspectiveFunc func;
     bool *ok;
-    const IPPwarpPerspectiveInvoker& operator= (const IPPwarpPerspectiveInvoker&);
+
+    const IPPWarpPerspectiveInvoker& operator= (const IPPWarpPerspectiveInvoker&);
 };
 #endif
-
 }
 
 void cv::warpPerspective( InputArray _src, OutputArray _dst, InputArray _M0,
@@ -4433,55 +4551,65 @@ void cv::warpPerspective( InputArray _src, OutputArray _dst, InputArray _M0,
         return;
 #endif
 
-    if( !(flags & WARP_INVERSE_MAP) )
-         invert(matM, matM);
-/*
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7)
-    int depth = src.depth();
-    int channels = src.channels();
-    if( ( depth == CV_8U || depth == CV_16U || depth == CV_32F ) &&
-        ( channels == 1 || channels == 3 || channels == 4 ) &&
-        ( borderType == cv::BORDER_TRANSPARENT || borderType == cv::BORDER_CONSTANT ) )
+
+#if defined (HAVE_IPP) && IPP_VERSION_MAJOR * 100 + IPP_VERSION_MINOR >= 801 && 0
+    int type = src.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+    if( (depth == CV_8U || depth == CV_16U || depth == CV_32F) &&
+       (cn == 1 || cn == 3 || cn == 4) &&
+       ( borderType == cv::BORDER_TRANSPARENT || borderType == cv::BORDER_CONSTANT ) &&
+       (interpolation == INTER_NEAREST || interpolation == INTER_LINEAR || interpolation == INTER_CUBIC))
     {
-        int type = src.type();
-        ippiWarpPerspectiveBackFunc ippFunc =
-            type == CV_8UC1 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_8u_C1R :
-            type == CV_8UC3 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_8u_C3R :
-            type == CV_8UC4 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_8u_C4R :
-            type == CV_16UC1 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_16u_C1R :
-            type == CV_16UC3 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_16u_C3R :
-            type == CV_16UC4 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_16u_C4R :
-            type == CV_32FC1 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_32f_C1R :
-            type == CV_32FC3 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_32f_C3R :
-            type == CV_32FC4 ? (ippiWarpPerspectiveBackFunc)ippiWarpPerspectiveBack_32f_C4R :
-            0;
-        int mode =
-            flags == INTER_LINEAR ? IPPI_INTER_LINEAR :
-            flags == INTER_NEAREST ? IPPI_INTER_NN :
-            flags == INTER_CUBIC ? IPPI_INTER_CUBIC :
-            0;
-        if( mode && ippFunc )
+        ippiWarpPerspectiveFunc ippFunc = 0;
+        if ((flags & WARP_INVERSE_MAP) != 0)
         {
-            double coeffs[3][3];
-            for( int i = 0; i < 3; i++ )
-            {
-                for( int j = 0; j < 3; j++ )
-                {
-                    coeffs[i][j] = matM.at<double>(i, j);
-                }
-            }
-            bool ok;
-            Range range(0, dst.rows);
-            IPPwarpPerspectiveInvoker invoker(src, dst, coeffs, mode, borderType, borderValue, ippFunc, &ok);
-            parallel_for_(range, invoker, dst.total()/(double)(1<<16));
-            if( ok )
-                return;
+            ippFunc = type == CV_8UC1 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_8u_C1R :
+            type == CV_8UC3 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_8u_C3R :
+            type == CV_8UC4 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_8u_C4R :
+            type == CV_16UC1 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_16u_C1R :
+            type == CV_16UC3 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_16u_C3R :
+            type == CV_16UC4 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_16u_C4R :
+            type == CV_32FC1 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_32f_C1R :
+            type == CV_32FC3 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_32f_C3R :
+            type == CV_32FC4 ? (ippiWarpPerspectiveFunc)ippiWarpPerspectiveBack_32f_C4R : 0;
         }
+        else
+        {
+            ippFunc = type == CV_8UC1 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_8u_C1R :
+            type == CV_8UC3 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_8u_C3R :
+            type == CV_8UC4 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_8u_C4R :
+            type == CV_16UC1 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_16u_C1R :
+            type == CV_16UC3 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_16u_C3R :
+            type == CV_16UC4 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_16u_C4R :
+            type == CV_32FC1 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_32f_C1R :
+            type == CV_32FC3 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_32f_C3R :
+            type == CV_32FC4 ? (ippiWarpPerspectiveFunc)ippiWarpPerspective_32f_C4R : 0;
+        }
+        int mode =
+        interpolation == INTER_NEAREST ? IPPI_INTER_NN :
+        interpolation == INTER_LINEAR ? IPPI_INTER_LINEAR :
+        interpolation == INTER_CUBIC ? IPPI_INTER_CUBIC : 0;
+        CV_Assert(mode && ippFunc);
+
+        double coeffs[3][3];
+        for( int i = 0; i < 3; i++ )
+            for( int j = 0; j < 3; j++ )
+                coeffs[i][j] = matM.at<double>(i, j);
+
+        bool ok;
+        Range range(0, dst.rows);
+        IPPWarpPerspectiveInvoker invoker(src, dst, coeffs, mode, borderType, borderValue, ippFunc, &ok);
+        parallel_for_(range, invoker, dst.total()/(double)(1<<16));
+        if( ok )
+            return;
+        setIppErrorStatus();
     }
 #endif
-*/
+
+    if( !(flags & WARP_INVERSE_MAP) )
+        invert(matM, matM);
+
     Range range(0, dst.rows);
-    warpPerspectiveInvoker invoker(src, dst, M, interpolation, borderType, borderValue);
+    WarpPerspectiveInvoker invoker(src, dst, M, interpolation, borderType, borderValue);
     parallel_for_(range, invoker, dst.total()/(double)(1<<16));
 }
 

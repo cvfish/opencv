@@ -57,6 +57,31 @@ namespace ocl {
 using namespace cv;
 using namespace testing;
 
+inline std::vector<UMat> ToUMat(const std::vector<Mat>& src)
+{
+    std::vector<UMat> dst;
+    dst.resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i)
+    {
+        src[i].copyTo(dst[i]);
+    }
+    return dst;
+}
+
+inline UMat ToUMat(const Mat& src)
+{
+    UMat dst;
+    src.copyTo(dst);
+    return dst;
+}
+
+inline UMat ToUMat(InputArray src)
+{
+    UMat dst;
+    src.getMat().copyTo(dst);
+    return dst;
+}
+
 extern int test_loop_times;
 
 #define MAX_VALUE 357
@@ -83,6 +108,17 @@ do \
     ASSERT_EQ(mat1.size(), mat2.size()); \
     EXPECT_LE(TestUtils::checkNormRelative(mat1, mat2), eps) \
         << "Size: " << mat1.size() << std::endl; \
+} while ((void)0, 0)
+
+#define EXPECT_MAT_N_DIFF(mat1, mat2, num) \
+do \
+{ \
+    ASSERT_EQ(mat1.type(), mat2.type()); \
+    ASSERT_EQ(mat1.size(), mat2.size()); \
+    Mat diff; \
+    absdiff(mat1, mat2, diff); \
+    EXPECT_LE(countNonZero(diff.reshape(1)), num) \
+    << "Size: " << mat1.size() << std::endl; \
 } while ((void)0, 0)
 
 #define OCL_EXPECT_MATS_NEAR(name, eps) \
@@ -232,9 +268,9 @@ struct CV_EXPORTS TestUtils
 
     static inline double checkNormRelative(InputArray m1, InputArray m2, InputArray mask = noArray())
     {
-        return cv::norm(m1.getMat(), m2.getMat(), cv::NORM_INF, mask) /
+        return cvtest::norm(m1.getMat(), m2.getMat(), cv::NORM_INF, mask) /
                 std::max((double)std::numeric_limits<float>::epsilon(),
-                         (double)std::max(cv::norm(m1.getMat(), cv::NORM_INF), norm(m2.getMat(), cv::NORM_INF)));
+                         (double)std::max(cvtest::norm(m1.getMat(), cv::NORM_INF), cvtest::norm(m2.getMat(), cv::NORM_INF)));
     }
 };
 
